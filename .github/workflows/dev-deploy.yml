@@ -1,0 +1,62 @@
+name: CI Dev Deployment
+
+on:
+  push:
+    branches: [ main ]  # 當你推送到 main 分支時自動觸發
+
+# 建立 Release 需要內容寫入權限
+permissions:
+  contents: write
+
+# 並行控制（避免同一分支的釋出互相踩到）
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v4
+
+      - name: 安裝 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安裝相依並建置
+        run: |
+          npm ci
+          npm run build --if-present
+          zip -r build.zip .
+
+      - name: 上傳建置產物
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: build.zip
+
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev   # 指定部署到 dev 環境，會套用 dev 的環境變數
+    steps:
+      - name: 下載建置產物
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+
+      - name: 建立 Dev 釋出（Release）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # 由 Actions 自動提供
+          TAG: ${{ vars.BUILD_TAG }}                 # 取自 dev 環境的 BUILD_TAG
+          NOTE: ${{ vars.RELEASE_NOTE }}             # 取自 dev 環境的 RELEASE_NOTE
+        run: |
+          # 若標籤已存在，先移除，避免建立 Release 失敗
+          gh release delete "$TAG" -y || true
+          gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$TAG || true
+
+          # 建立新的 Release，附上建置檔
+          gh release create "$TAG" build.zip --notes "$NOTE"
