@@ -21,16 +21,18 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20     # 不使用 cache
+          node-version: 20
 
-      - name: Install & Build
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install & Build (Bun-first with fallbacks)
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
-          npm run build --if-present
+          bun install
+          # 優先使用你的 package.json 的 "build" 腳本（若內含 bun i && ncc ... 也可）
+          npm run build || bun run build || bunx @vercel/ncc build src/index.js --license licenses.txt
           zip -r build.zip .
 
       - name: Upload Artifact
