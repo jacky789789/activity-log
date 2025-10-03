@@ -2,7 +2,7 @@ name: CI Dev Deployment
 
 on:
   push:
-    branches: [ main, master ]  # 同時支援 main / master
+    branches: [ main, master ]  # 支援 main / master 任何一個分支
 
 permissions:
   contents: write
@@ -14,53 +14,70 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: 📥 Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: 🧰 Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Setup Bun
+      - name: 🧰 Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Install & Build (Bun-first with fallbacks)
+      - name: 🏗️ Install & Build (Bun-first with fallbacks)
         run: |
           bun install
-          # 優先使用你的 package.json 的 "build" 腳本（若內含 bun i && ncc ... 也可）
           npm run build || bun run build || bunx @vercel/ncc build src/index.js --license licenses.txt
           zip -r build.zip .
 
-      - name: Upload Artifact
+      - name: 📤 Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-artifact
           path: build.zip
 
-deploy-dev:
-  needs: build
-  runs-on: ubuntu-latest
-  environment: dev
-  steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
 
-    - name: Download Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: build-artifact
+    steps:
+      - name: 📥 Checkout repository (for gh CLI to work)
+        uses: actions/checkout@v4
 
-    - name: Release Dev Build
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        TAG: ${{ vars.BUILD_TAG }}
-        NOTE: ${{ vars.RELEASE_NOTE }}
-      run: |
-        gh release delete "$TAG" -y || true
-        gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$TAG || true
-        gh release create "$TAG" build.zip --notes "$NOTE"
+      - name: 📥 Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
 
+      - name: 🚿 Cleanup existing release & tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ vars.BUILD_TAG }}
+        run: |
+          # 若 release 存在才刪
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" -y --repo "$GITHUB_REPOSITORY"
+          fi
+
+          # 若 tag 存在才刪
+          if gh api -H "Accept: application/vnd.github+json" \
+              "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" >/dev/null 2>&1; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"
+          fi
+
+      - name: 🚀 Create new Dev Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ vars.BUILD_TAG }}
+          NOTE: ${{ vars.RELEASE_NOTE }}
+        run: |
+          gh release create "$TAG" build.zip --notes "$NOTE" --repo "$GITHUB_REPOSITORY"
