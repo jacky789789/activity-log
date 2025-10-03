@@ -1,14 +1,14 @@
-name: CI Dev Deployment
+name: CI Staging Deployment
 
 on:
   push:
-    branches: [ main, master ]  # 支援 main / master 任何一個分支
+    branches: [ main, master ]  # 支援 main / master
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: staging-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -41,10 +41,10 @@ jobs:
           name: build-artifact
           path: build.zip
 
-  deploy-dev:
+  deploy-staging:
     needs: build
     runs-on: ubuntu-latest
-    environment: dev
+    environment: staging
 
     steps:
       - name: 📥 Checkout repository (for gh CLI to work)
@@ -55,12 +55,12 @@ jobs:
         with:
           name: build-artifact
 
-      - name: 🚿 Cleanup existing release & tag
+      - name: 🚿 Cleanup existing release & tag (idempotent)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ vars.BUILD_TAG }}
+          TAG: ${{ vars.BUILD_TAG }}     # 從 staging 環境讀取
         run: |
           # 若 release 存在才刪
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -73,11 +73,11 @@ jobs:
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"
           fi
 
-      - name: 🚀 Create new Dev Release
+      - name: 🚀 Create Staging Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ vars.BUILD_TAG }}
-          NOTE: ${{ vars.RELEASE_NOTE }}
+          TAG: ${{ vars.BUILD_TAG }}         # e.g. staging-v1.0
+          NOTE: ${{ vars.RELEASE_NOTE }}     # e.g. Staging build for pre-production
         run: |
           gh release create "$TAG" build.zip --notes "$NOTE" --repo "$GITHUB_REPOSITORY"
