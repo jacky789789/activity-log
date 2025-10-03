@@ -1,0 +1,79 @@
+name: CI/CD Deployment Pipeline
+
+on:
+  # 以人工按鈕觸發，避免每次推送都部署到正式環境
+  workflow_dispatch: {}
+
+# 建立 Release 與 Deployment 需要的權限
+permissions:
+  contents: write
+  deployments: write
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v4
+
+      - name: 安裝 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安裝相依並建置
+        run: |
+          npm ci
+          npm run build --if-present
+          zip -r build.zip .
+
+      - name: 上傳建置產物
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: build.zip
+
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: 下載建置產物
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+
+      - name: 建立 Staging 釋出
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ vars.BUILD_TAG }}        # 取自 staging 環境
+          NOTE: ${{ vars.RELEASE_NOTE }}
+        run: |
+          gh release delete "$TAG" -y || true
+          gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$TAG || true
+          gh release create "$TAG" build.zip --notes "$NOTE"
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production   # 這裡會觸發 production 的保護規則（需要審核）
+    steps:
+      - name: 下載建置產物
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+
+      - name: 建立 Production 釋出
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ vars.BUILD_TAG }}        # 取自 production 環境
+          NOTE: ${{ vars.RELEASE_NOTE }}
+        run: |
+          gh release delete "$TAG" -y || true
+          gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$TAG || true
+          gh release create "$TAG" build.zip --notes "$NOTE"
