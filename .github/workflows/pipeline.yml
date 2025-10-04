@@ -42,42 +42,42 @@ jobs:
           name: build-artifact
           path: build.zip
 
-  deploy-staging:
-    needs: build
-    runs-on: ubuntu-latest
-    environment: staging
-    steps:
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: build-artifact
+deploy-staging:
+  needs: build
+  runs-on: ubuntu-latest
+  environment: staging
+  steps:
+    - name: Download Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifact
 
-      - name: Release Staging
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ vars.BUILD_TAG }}
-          NOTE: ${{ vars.RELEASE_NOTE }}
-        run: |
-          gh release delete "$TAG" -y || true
-          gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$TAG || true
-          gh release create "$TAG" build.zip --notes "$NOTE"
+    - name: Release Staging
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: ${{ vars.BUILD_TAG }}
+        NOTE: ${{ vars.RELEASE_NOTE }}
+      run: |
+        gh release delete "$TAG" -y || true
+        gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$TAG || true
+        gh release create "$TAG" build.zip --notes "$NOTE"
 
   deploy-production:
     needs: deploy-staging
     runs-on: ubuntu-latest
     environment: production   # 這裡會卡審核（Required reviewers）
     steps:
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: build-artifact
+    - name: Download Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifact
 
-      - name: Release Production
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ vars.BUILD_TAG }}
-          NOTE: ${{ vars.RELEASE_NOTE }}
-        run: |
-          gh release delete "$TAG" -y || true
-          gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$TAG || true
-          gh release create "$TAG" build.zip --notes "$NOTE"
+    - name: Release Production
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: ${{ vars.BUILD_TAG }}
+        NOTE: ${{ vars.RELEASE_NOTE }}
+      run: |
+        gh release delete "$TAG" -y || true
+        gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/$TAG || true
+        gh release create "$TAG" build.zip --notes "$NOTE"
