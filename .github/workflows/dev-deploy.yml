@@ -44,8 +44,10 @@ jobs:
       - name: 📤 Upload bumped package metadata
         uses: actions/upload-artifact@v4
         with:
-          name: bumped-package-json
-          path: package.json
+          name: bumped-package
+          path: |
+            package.json
+            package-lock.json
 
   build:
     needs: prepare-version
@@ -57,12 +59,13 @@ jobs:
       - name: 📦 Download bumped package metadata
         uses: actions/download-artifact@v4
         with:
-          name: bumped-package-json
+          name: bumped-package
           path: bumped-package
 
       - name: 🔄 Apply bumped package metadata
         run: |
           mv bumped-package/package.json package.json
+          mv bumped-package/package-lock.json package-lock.json
           rm -rf bumped-package
 
       - name: 🧰 Setup Node.js
