@@ -1,14 +1,10 @@
 {
-	"dependencies": {
-		"@actions/core": "^1.11.1",
-		"@actions/github": "^6.0.1",
-		"axios": "^1.11.0",
-		"yaml": "^2.8.1"
-	},
-	"scripts": {
-		"build": "bun i && ncc build src/index.js --license licenses.txt"
-	},
-	"devDependencies": {
-		"@vercel/ncc": "^0.38.3"
-	}
+  "version": "0.1.0",
+  "scripts": {
+    "build": "bun i && ncc build src/index.js --license licenses.txt",
+    "lint": "eslint src --ext .js",
+    "test": "vitest run",
+    "version:bump": "node scripts/bump-version.js",
+    "version:notes": "node scripts/generate-release-notes.js"
+  }
 }
