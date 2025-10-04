@@ -14,11 +14,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  prepare-version:
+    runs-on: ubuntu-latest
+    outputs:
+      next_tag: ${{ steps.bump.outputs.next_tag }}
+      release_notes: ${{ steps.notes.outputs.notes }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Bump semantic version
+        id: bump
+        run: npm run version:bump
+
+      - name: Generate release notes
+        id: notes
+        env:
+          RELEASE_ENV: base
+          RELEASE_VERSION: ${{ steps.bump.outputs.next_tag }}
+        run: npm run version:notes
+
+      - name: Upload bumped package metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: bumped-package-json
+          path: package.json
+
   build:
+    needs: prepare-version
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download bumped package metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: bumped-package-json
+          path: bumped-package
+
+      - name: Apply bumped package metadata
+        run: |
+          mv bumped-package/package.json package.json
+          rm -rf bumped-package
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -43,7 +89,9 @@ jobs:
           path: build.zip
 
   deploy-dev:
-    needs: build
+    needs:
+      - build
+      - prepare-version
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -56,15 +104,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ vars.BUILD_TAG }}
-          NOTE: ${{ vars.RELEASE_NOTE }}
+          TAG: ${{ needs.prepare-version.outputs.next_tag }}
+          NOTE: ${{ needs.prepare-version.outputs.release_notes }}
         run: |
-          gh release delete "$TAG" -y --repo "$GITHUB_REPOSITORY" || true
-          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" || true
-          gh release create "$TAG" build.zip --notes "$NOTE" --repo "$GITHUB_REPOSITORY"
+          TAG_WITH_ENV="${TAG}-dev"
+          NOTE_WITH_ENV="${NOTE}"$'\n'"Environment: dev"
+          gh release delete "$TAG_WITH_ENV" -y --repo "$GITHUB_REPOSITORY" || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG_WITH_ENV" || true
+          gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
 
   deploy-staging:
-    needs: deploy-dev
+    needs:
+      - deploy-dev
+      - prepare-version
     runs-on: ubuntu-latest
     environment: staging
     steps:
@@ -77,15 +129,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ vars.BUILD_TAG }}
-          NOTE: ${{ vars.RELEASE_NOTE }}
+          TAG: ${{ needs.prepare-version.outputs.next_tag }}
+          NOTE: ${{ needs.prepare-version.outputs.release_notes }}
         run: |
-          gh release delete "$TAG" -y --repo "$GITHUB_REPOSITORY" || true
-          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" || true
-          gh release create "$TAG" build.zip --notes "$NOTE" --repo "$GITHUB_REPOSITORY"
+          TAG_WITH_ENV="${TAG}-staging"
+          NOTE_WITH_ENV="${NOTE}"$'\n'"Environment: staging"
+          gh release delete "$TAG_WITH_ENV" -y --repo "$GITHUB_REPOSITORY" || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG_WITH_ENV" || true
+          gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
 
   deploy-production:
-    needs: deploy-staging
+    needs:
+      - deploy-staging
+      - prepare-version
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -98,9 +154,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ vars.BUILD_TAG }}
-          NOTE: ${{ vars.RELEASE_NOTE }}
+          TAG: ${{ needs.prepare-version.outputs.next_tag }}
+          NOTE: ${{ needs.prepare-version.outputs.release_notes }}
         run: |
-          gh release delete "$TAG" -y --repo "$GITHUB_REPOSITORY" || true
-          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" || true
-          gh release create "$TAG" build.zip --notes "$NOTE" --repo "$GITHUB_REPOSITORY"
+          TAG_WITH_ENV="${TAG}"
+          NOTE_WITH_ENV="${NOTE}"$'\n'"Environment: production"
+          gh release delete "$TAG_WITH_ENV" -y --repo "$GITHUB_REPOSITORY" || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG_WITH_ENV" || true
+          gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
