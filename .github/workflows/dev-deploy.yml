@@ -1,20 +1,19 @@
-name: CI Staging Deployment
+name: CI Dev Deployment
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
 
 permissions:
   contents: write
 
 concurrency:
-  group: staging-release-${{ github.ref }}
+  group: dev-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
@@ -40,53 +39,33 @@ jobs:
         with:
           name: build-artifact
           path: build.zip
-          
-  deploy-staging:
+
+  deploy-dev:
     needs: build
     runs-on: ubuntu-latest
-    environment: staging
-
+    environment: dev
     steps:
-    - name: 📥 Checkout repository (for gh CLI)
-      uses: actions/checkout@v4
+      - name: 📥 Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
 
-    - name: 📥 Download Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: build-artifact
+      - name: 🚿 Cleanup existing release & tag (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ vars.BUILD_TAG }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" -y --repo "$GITHUB_REPOSITORY"
+          fi
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" || true
 
-    - name: 🚿 Cleanup existing release & tag (idempotent)
-      shell: bash
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        TAG: ${{ vars.BUILD_TAG }}
-      run: |
-        # 刪 release（如果存在）
-        if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-          gh release delete "$TAG" -y --repo "$GITHUB_REPOSITORY"
-        else
-          echo "Release $TAG 不存在，跳過刪除"
-        fi
-
-        # 刪 tag（如果存在）
-        if gh api -H "Accept: application/vnd.github+json" \
-            "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" >/dev/null 2>&1; then
-          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"
-        else
-          echo "Tag $TAG 不存在，跳過刪除"
-        fi
-
-    - name: 🚀 Create Staging Release
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        TAG: ${{ vars.BUILD_TAG }}
-        NOTE: ${{ vars.RELEASE_NOTE }}
-      run: |
-        gh release create "$TAG" build.zip --notes "$NOTE" --repo "$GITHUB_REPOSITORY"
-        
-  
+      - name: 🚀 Create Dev Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ vars.BUILD_TAG }}
           NOTE: ${{ vars.RELEASE_NOTE }}
         run: |
           gh release create "$TAG" build.zip --notes "$NOTE" --repo "$GITHUB_REPOSITORY"
