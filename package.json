@@ -2,9 +2,15 @@
   "version": "0.1.0",
   "scripts": {
     "build": "bun i && ncc build src/index.js --license licenses.txt",
-    "lint": "eslint src --ext .js",
+    "lint": "eslint .",
     "test": "vitest run",
     "version:bump": "node scripts/bump-version.js",
     "version:notes": "node scripts/generate-release-notes.js"
+  },
+  "devDependencies": {
+    "eslint": "^9.6.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.6.0",
+    "vitest": "^1.6.0"
   }
 }
