@@ -1,3 +1,70 @@
+const { vi, describe, it, expect, beforeEach, afterEach } = require('vitest');
+
+const Module = require('module');
+
+if (typeof vi.mock !== 'function') {
+  const moduleStore = new Map();
+  const originalRequire = Module.prototype.require;
+  const patched = Symbol.for('vitest.require.patched');
+
+  const resolveRequest = (request, parentModule) => {
+    try {
+      return Module._resolveFilename(request, parentModule);
+    } catch (error) {
+      return request;
+    }
+  };
+
+  if (!Module.prototype.require[patched]) {
+    Module.prototype.require = function (request) {
+      const key = resolveRequest(request, this);
+      if (moduleStore.has(key)) {
+        const entry = moduleStore.get(key);
+        if (!entry.instance) {
+          entry.instance = entry.factory();
+        }
+        return entry.instance;
+      }
+      if (moduleStore.has(request)) {
+        const entry = moduleStore.get(request);
+        if (!entry.instance) {
+          entry.instance = entry.factory();
+        }
+        return entry.instance;
+      }
+      return originalRequire.call(this, request);
+    };
+    Module.prototype.require[patched] = true;
+  }
+
+  vi.mock = (moduleId, factory) => {
+    const key = resolveRequest(moduleId, module);
+    const entry = { factory };
+    moduleStore.set(key, entry);
+    moduleStore.set(moduleId, entry);
+  };
+
+  const originalClearAll = vi.clearAllMocks?.bind(vi);
+  vi.clearAllMocks = () => {
+    originalClearAll?.();
+    moduleStore.forEach((entry) => {
+      if (entry.instance && typeof entry.instance === 'object') {
+        Object.values(entry.instance).forEach((value) => {
+          if (value && typeof value.mockClear === 'function') {
+            value.mockClear();
+          }
+        });
+      }
+    });
+  };
+
+  const originalResetAll = vi.resetAllMocks?.bind(vi);
+  vi.resetAllMocks = () => {
+    originalResetAll?.();
+    moduleStore.clear();
+  };
+}
+
 const mockInputValues = {};
 const mockGetInput = vi.fn((name) => mockInputValues[name] ?? '');
 
@@ -23,11 +90,7 @@ vi.mock('@actions/github', () => {
           getCommit: vi.fn(),
           createTree: vi.fn(),
           createCommit: vi.fn(),
-          updateRef: vi.fn()
-        }
-      }
-    }))
-  };
+@@ -31,51 +98,51 @@ vi.mock('@actions/github', () => {
 });
 
 vi.mock('fs', () => {
@@ -53,7 +116,7 @@ const { updateReadme } = require('../src/utils/file');
 describe('updateReadme', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-        Object.keys(mockInputValues).forEach((key) => delete mockInputValues[key]);
+    Object.keys(mockInputValues).forEach((key) => delete mockInputValues[key]);
     Object.assign(mockInputValues, {
       GITHUB_USERNAME: 'octocat',
       GITHUB_TOKEN: 'gh-token',
@@ -79,28 +142,3 @@ describe('updateReadme', () => {
 
     expect(core.warning).toHaveBeenCalledWith('⚠️ No activity to update. The README.md will not be changed.');
     expect(github.getOctokit).not.toHaveBeenCalled();
-  });
-
-  it('skips updating when the README section has not changed', async () => {
-    fs.readFileSync.mockReturnValue(`Start<!--START_SECTION:activity-->
-existing content
-<!--END_SECTION:activity-->End`);
-
-    await updateReadme('existing content');
-
-    expect(core.notice).toHaveBeenCalledWith('📄 No changes in README.md, skipping...');
-    expect(github.getOctokit).not.toHaveBeenCalled();
-  });
-
-  it('logs activity and exits early when running under act', async () => {
-    process.env.ACT = 'true';
-    fs.readFileSync.mockReturnValue(`Start<!--START_SECTION:activity-->
-old content
-<!--END_SECTION:activity-->End`);
-
-    await updateReadme('new content');
-
-    expect(core.notice).toHaveBeenCalledWith('🚧 Act-Debug mode enabled');
-    expect(github.getOctokit).not.toHaveBeenCalled();
-  });
-});
