@@ -12,61 +12,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  prepare-version:
-    runs-on: ubuntu-latest
-    outputs:
-      next_tag: ${{ steps.bump.outputs.next_tag }}
-      release_notes: ${{ steps.notes.outputs.notes }}
-    steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
-
-      - name: 🧰 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: 📦 Install dependencies
-        run: npm install
-
-      - name: 🔢 Bump semantic version
-        id: bump
-        run: npm run version:bump
-
-      - name: 📝 Generate release notes
-        id: notes
-        env:
-          RELEASE_ENV: dev
-          RELEASE_VERSION: ${{ steps.bump.outputs.next_tag }}
-        run: npm run version:notes
-
-      - name: 📤 Upload bumped package metadata
-        uses: actions/upload-artifact@v4
-        with:
-          name: bumped-package
-          path: |
-            package.json
-            package-lock.json
-
   build:
-    needs: prepare-version
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
-
-      - name: 📦 Download bumped package metadata
-        uses: actions/download-artifact@v4
-        with:
-          name: bumped-package
-          path: bumped-package
-
-      - name: 🔄 Apply bumped package metadata
-        run: |
-          mv bumped-package/package.json package.json
-          mv bumped-package/package-lock.json package-lock.json
-          rm -rf bumped-package
 
       - name: 🧰 Setup Node.js
         uses: actions/setup-node@v4
@@ -95,9 +45,7 @@ jobs:
           path: build.zip
 
   deploy-dev:
-    needs:
-      - prepare-version
-      - build
+    needs: build
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -110,8 +58,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.prepare-version.outputs.next_tag }}-dev
+          RAW_TAG: ${{ vars.BUILD_TAG }}
         run: |
+          TAG="${RAW_TAG}-dev"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release delete "$TAG" -y --repo "$GITHUB_REPOSITORY"
           fi
@@ -121,7 +70,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.prepare-version.outputs.next_tag }}-dev
-          NOTE: ${{ needs.prepare-version.outputs.release_notes }}
+          RAW_TAG: ${{ vars.BUILD_TAG }}
+          NOTE: ${{ vars.RELEASE_NOTE }}
         run: |
+          TAG="${RAW_TAG}-dev"
           gh release create "$TAG" build.zip --notes "$NOTE"$'\n''Environment: dev' --repo "$GITHUB_REPOSITORY"
