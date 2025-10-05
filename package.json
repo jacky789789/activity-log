@@ -7,7 +7,7 @@
   "scripts": {
     "build": "bunx @vercel/ncc build src/index.js --license licenses.txt",
     "lint": "bunx eslint .",
-    "test": "bun test"
+    "test": "vitest run"
   },
   "repository": {
     "type": "git",
@@ -32,6 +32,7 @@
     "yaml": "^2.8.1"
   },
   "devDependencies": {
-    "@vercel/ncc": "^0.38.3"
+    "@vercel/ncc": "^0.38.3",
+    "vitest": "^1.6.0"
   }
 }
