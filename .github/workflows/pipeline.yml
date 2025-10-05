@@ -125,29 +125,7 @@ jobs:
           gh release delete "$TAG_WITH_ENV" -y --repo "$GITHUB_REPOSITORY" || true
           gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG_WITH_ENV" || true
           gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
-
-      - name: Notify Dev release success
-        if: success()
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          NEXT_TAG: ${{ needs.prepare-version.outputs.next_tag }}
-          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          ENV_NAME="dev"
-          MESSAGE=":white_check_mark: Release for ${ENV_NAME} succeeded (tag: ${NEXT_TAG}). Details: ${WORKFLOW_URL}"
-          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"${MESSAGE}\"}" "$SLACK_WEBHOOK_URL"
-
-      - name: Notify Dev release failure
-        if: failure()
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          NEXT_TAG: ${{ needs.prepare-version.outputs.next_tag }}
-          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          ENV_NAME="dev"
-          MESSAGE=":x: Release for ${ENV_NAME} failed (tag: ${NEXT_TAG}). Investigate: ${WORKFLOW_URL}"
-          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"${MESSAGE}\"}" "$SLACK_WEBHOOK_URL"
-
+  
   deploy-staging:
     needs:
       - deploy-dev
@@ -173,27 +151,6 @@ jobs:
           gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG_WITH_ENV" || true
           gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
 
-      - name: Notify Staging release success
-        if: success()
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          NEXT_TAG: ${{ needs.prepare-version.outputs.next_tag }}
-          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          ENV_NAME="staging"
-          MESSAGE=":white_check_mark: Release for ${ENV_NAME} succeeded (tag: ${NEXT_TAG}). Details: ${WORKFLOW_URL}"
-          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"${MESSAGE}\"}" "$SLACK_WEBHOOK_URL"
-
-      - name: Notify Staging release failure
-        if: failure()
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          NEXT_TAG: ${{ needs.prepare-version.outputs.next_tag }}
-          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          ENV_NAME="staging"
-          MESSAGE=":x: Release for ${ENV_NAME} failed (tag: ${NEXT_TAG}). Investigate: ${WORKFLOW_URL}"
-          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"${MESSAGE}\"}" "$SLACK_WEBHOOK_URL"
 
   deploy-production:
     needs:
@@ -219,24 +176,3 @@ jobs:
           gh release delete "$TAG_WITH_ENV" -y --repo "$GITHUB_REPOSITORY" || true
           gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG_WITH_ENV" || true
           gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
-      - name: Notify Production release success
-        if: success()
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          NEXT_TAG: ${{ needs.prepare-version.outputs.next_tag }}
-          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          ENV_NAME="production"
-          MESSAGE=":white_check_mark: Release for ${ENV_NAME} succeeded (tag: ${NEXT_TAG}). Details: ${WORKFLOW_URL}"
-          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"${MESSAGE}\"}" "$SLACK_WEBHOOK_URL"
-
-      - name: Notify Production release failure
-        if: failure()
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          NEXT_TAG: ${{ needs.prepare-version.outputs.next_tag }}
-          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          ENV_NAME="production"
-          MESSAGE=":x: Release for ${ENV_NAME} failed (tag: ${NEXT_TAG}). Investigate: ${WORKFLOW_URL}"
-          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"${MESSAGE}\"}" "$SLACK_WEBHOOK_URL"
