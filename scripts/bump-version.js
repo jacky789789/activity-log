@@ -16,9 +16,16 @@ pkg.version = next;
 fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
 lock.version = next;
-if (lock.packages && lock.packages[""]) {
-  lock.packages[""].version = next;
+
+if (!lock.packages) {
+  lock.packages = {};
 }
+
+if (!lock.packages[""]) {
+  lock.packages[""] = {};
+}
+
+lock.packages[""].version = next;
 fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
 
 if (process.env.GITHUB_OUTPUT) {
