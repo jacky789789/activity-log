@@ -1,5 +1,9 @@
+const mockInputValues = {};
+const mockGetInput = vi.fn((name) => mockInputValues[name] ?? '');
+
 vi.mock('@actions/core', () => {
   return {
+    getInput: mockGetInput,
     setFailed: vi.fn(),
     warning: vi.fn(),
     notice: vi.fn()
@@ -49,6 +53,20 @@ const { updateReadme } = require('../src/utils/file');
 describe('updateReadme', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+        Object.keys(mockInputValues).forEach((key) => delete mockInputValues[key]);
+    Object.assign(mockInputValues, {
+      GITHUB_USERNAME: 'octocat',
+      GITHUB_TOKEN: 'gh-token',
+      GH_API_URL: 'https://api.github.com',
+      EVENT_LIMIT: '10',
+      OUTPUT_STYLE: 'MARKDOWN',
+      IGNORE_EVENTS: '[]',
+      HIDE_DETAILS_ON_PRIVATE_REPOS: 'false',
+      README_PATH: 'README.md',
+      COMMIT_MESSAGE: 'Update README',
+      EVENT_EMOJI_MAP: '',
+      DRY_RUN: 'false'
+    });
     delete process.env.ACT;
   });
 
