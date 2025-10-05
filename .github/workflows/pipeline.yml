@@ -80,7 +80,15 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+          
+      - name: Install dependencies
+        run: npm install
 
+      - name: Run lint
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
       - name: Install & Build (Bun-first with fallbacks)
         run: |
           bun install
