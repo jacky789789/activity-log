@@ -131,3 +131,25 @@ jobs:
           NOTE: ${{ needs.prepare-version.outputs.release_notes }}
         run: |
           gh release create "$TAG" build.zip --notes "$NOTE"$'\n''Environment: dev' --repo "$GITHUB_REPOSITORY"
+
+      - name: 📣 Notify Dev release success
+        if: success()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          NEXT_TAG: ${{ needs.prepare-version.outputs.next_tag }}
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          ENV_NAME="dev"
+          MESSAGE=":white_check_mark: Release for ${ENV_NAME} succeeded (tag: ${NEXT_TAG}). Details: ${WORKFLOW_URL}"
+          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"${MESSAGE}\"}" "$SLACK_WEBHOOK_URL"
+
+      - name: 📣 Notify Dev release failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          NEXT_TAG: ${{ needs.prepare-version.outputs.next_tag }}
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          ENV_NAME="dev"
+          MESSAGE=":x: Release for ${ENV_NAME} failed (tag: ${NEXT_TAG}). Investigate: ${WORKFLOW_URL}"
+          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"${MESSAGE}\"}" "$SLACK_WEBHOOK_URL"
