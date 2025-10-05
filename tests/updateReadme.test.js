@@ -1,5 +1,3 @@
-const { describe, it, expect, beforeEach, afterEach, vi } = require('vitest');
-
 vi.mock('@actions/core', () => {
   return {
     setFailed: vi.fn(),
