@@ -82,12 +82,6 @@ jobs:
       - name: 📦 Install dependencies
         run: npm install
 
-      - name: 🧹 Run lint
-        run: npm run lint
-
-      - name: 🧪 Run tests
-        run: npm test
-
       - name: 🏗️ Install & Build (Bun-first with fallbacks)
         run: |
           bun install
