@@ -17,15 +17,17 @@ fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
 lock.version = next;
 
-if (!lock.packages) {
+if (!lock.packages || typeof lock.packages !== "object") {
   lock.packages = {};
 }
 
-if (!lock.packages[""]) {
-  lock.packages[""] = {};
-}
+const rootPackage = lock.packages[""];
 
-lock.packages[""].version = next;
+if (rootPackage && typeof rootPackage === "object" && !Array.isArray(rootPackage)) {
+  rootPackage.version = next;
+} else {
+  lock.packages[""] = { version: next };
+}
 fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
 
 if (process.env.GITHUB_OUTPUT) {
