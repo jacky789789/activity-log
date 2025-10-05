@@ -1,0 +1,37 @@
+{
+  "name": "activity-log",
+  "version": "1.0.0",
+  "description": "GitHub Action that updates README files with the latest GitHub activity.",
+  "main": "dist/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "bunx @vercel/ncc build src/index.js --license licenses.txt",
+    "lint": "bunx eslint .",
+    "test": "bun test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheDanniCraft/activity-log.git"
+  },
+  "keywords": [
+    "github",
+    "actions",
+    "activity",
+    "readme"
+  ],
+  "author": "TheDanniCraft",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/TheDanniCraft/activity-log/issues"
+  },
+  "homepage": "https://github.com/TheDanniCraft/activity-log#readme",
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/github": "^6.0.1",
+    "axios": "^1.11.0",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.3"
+  }
+}
