@@ -1,4 +1,4 @@
-name: CI/CD Deployment Pipeline
+name: CI/CD Deployment Pipeline (O-grade)
 
 on:
   workflow_dispatch: {}
@@ -8,75 +8,160 @@ permissions:
   deployments: write
 
 jobs:
-  build:
+  build_and_test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20]   # O：多版本矩陣
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
 
-      # 跟 dev 一樣的「lockfile-safe」安裝策略（簡化版）
-      - name: Install deps (ci with fallback)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # O：若 lint script 使用 bunx，則動態安裝 bun（否則略過）
+      - name: Install bun if lint uses bunx
+        shell: bash
+        run: |
+          set -e
+          if [ -f package.json ] && grep -q '"lint".*bunx' package.json; then
+            echo "Detected bunx in lint script -> installing bun"
+            curl -fsSL https://bun.sh/install | bash
+            echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+          else
+            echo "No bunx in lint script -> skip bun install"
+          fi
+
+      # O：lockfile-safe 安裝：有 lock 就 npm ci；失敗或無 lock 改 npm install
+      - name: Install dependencies (ci with fallback)
+        shell: bash
         run: |
           if [ -f package.json ]; then
             if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-              npm ci --no-audit || npm install
+              echo "Lockfile detected -> npm ci"
+              npm ci --no-audit || (echo "ci failed -> npm install" && npm install)
             else
+              echo "No lockfile -> npm install"
               npm install
             fi
           else
-            echo "No package.json, skip"
+            echo "No package.json -> skip install"
           fi
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Test
+        run: npm test --if-present
 
       - name: Build
         run: |
           if [ -f package.json ]; then
             npm run build --if-present || npm run compile --if-present || echo "no build script"
+          else
+            echo "No package.json -> skip build"
           fi
 
-      - name: Archive
-        run: zip -r build.zip . -x ".git/*" "node_modules/*"
+      - name: Archive artifacts (per runtime)
+        run: zip -r build-${{ matrix.node-version }}.zip . -x ".git/*" "node_modules/*"
 
-      - name: Upload Artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
-        with: { name: build-artifact, path: build.zip }
+        with:
+          name: build-artifacts
+          path: build-*.zip
+
+  # O：動態版本標籤（從 package.json 讀 version + 追加 run number）
+  versioning:
+    needs: build_and_test
+    runs-on: ubuntu-latest
+    outputs:
+      TAG_STAGING: ${{ steps.mk.outputs.staging }}
+      TAG_PROD: ${{ steps.mk.outputs.prod }}
+      BASE_VERSION: ${{ steps.mk.outputs.base }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: mk
+        shell: bash
+        run: |
+          if [ -f package.json ]; then
+            base=$(node -p "require('./package.json').version || '0.1.0'")
+          else
+            base="0.1.0"
+          fi
+          runno="${GITHUB_RUN_NUMBER}"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "staging=staging-${base}+build-${runno}" >> "$GITHUB_OUTPUT"
+          echo "prod=prod-${base}+build-${runno}" >> "$GITHUB_OUTPUT"
 
   deploy-staging:
-    needs: build
+    needs: [versioning]
     runs-on: ubuntu-latest
     environment: staging
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: build-artifact }
+        with:
+          name: build-artifacts
 
       - name: Release to Staging (idempotent, repo-scoped)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ vars.BUILD_TAG }}         # staging-v1.0
-          NOTE: ${{ vars.RELEASE_NOTE }}     # Testing pre-production release
+          TAG: ${{ needs.versioning.outputs.TAG_STAGING }}
+          NOTE: ${{ vars.RELEASE_NOTE }}
         run: |
           gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1 \
             && gh release delete "$TAG" --cleanup-tag --yes --repo "$GH_REPO" \
             || echo "No existing release for $TAG"
-          gh release create "$TAG" build.zip --notes "${NOTE:-'Staging release'}" --repo "$GH_REPO"
+          gh release create "$TAG" build-*.zip --notes "${NOTE:-'Testing pre-production release'}" --repo "$GH_REPO"
+
+      # O：通知（Slack；若未設 secret 會自動跳過）
+      - name: Notify Slack (staging)
+        if: ${{ success() && env.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          payload=$(jq -nc --arg t "🟡 Staging released: ${{ needs.versioning.outputs.TAG_STAGING }}" '{text:$t}')
+          curl -sS -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" || true
 
   deploy-production:
-    needs: deploy-staging
+    needs: [deploy-staging, versioning]
     runs-on: ubuntu-latest
-    environment: production   # 這裡會觸發 reviewers 審核
+    environment: production   # 這裡會等待 Reviewer Approve
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: build-artifact }
+        with:
+          name: build-artifacts
 
       - name: Release to Production (awaits approval)
+        id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ vars.BUILD_TAG }}         # prod-v1.0
-          NOTE: ${{ vars.RELEASE_NOTE }}     # Production release
+          TAG: ${{ needs.versioning.outputs.TAG_PROD }}
+          NOTE: ${{ vars.RELEASE_NOTE }}
         run: |
           gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1 \
             && gh release delete "$TAG" --cleanup-tag --yes --repo "$GH_REPO" \
             || echo "No existing release for $TAG"
-          gh release create "$TAG" build.zip --notes "${NOTE:-'Production release'}" --repo "$GH_REPO"
+          gh release create "$TAG" build-*.zip --notes "${NOTE:-'Production release'}" --repo "$GH_REPO"
+
+      - name: Notify Slack (prod)
+        if: ${{ success() && env.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          payload=$(jq -nc --arg t "✅ Production released: ${{ needs.versioning.outputs.TAG_PROD }}" '{text:$t}')
+          curl -sS -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" || true
+
+      # O：rollback（若 prod 失敗，自動清掉半成品 release/tag）
+      - name: Rollback if failed (cleanup half-done releases)
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG_P: ${{ needs.versioning.outputs.TAG_PROD }}
+        run: |
+          gh release delete "$TAG_P" --cleanup-tag --yes --repo "$GH_REPO" || true
