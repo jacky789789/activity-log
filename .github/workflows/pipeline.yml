@@ -1,6 +1,5 @@
 name: CI/CD Deployment Pipeline
 
-
 on:
   workflow_dispatch:
   push:
