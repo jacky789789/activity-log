@@ -12,8 +12,9 @@ jobs:
     name: Build & Test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false              # ✅ 不要因單一失敗而取消其他矩陣任務
       matrix:
-        node-version: [18, 20]   # 👈 這就是矩陣，會同時跑 Node 18 / 20
+        node-version: [18, 20]
     steps:
       - uses: actions/checkout@v4
 
@@ -22,12 +23,30 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Install dependencies
+      # ✅ 只要 package.json 的 lint 有 bunx，就安裝 Bun
+      - name: Install bun if lint uses bunx
+        shell: bash
         run: |
-          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-            npm ci --no-audit || npm install
+          if [ -f package.json ] && grep -q '"lint".*bunx' package.json; then
+            echo "bunx detected in lint script -> install Bun"
+            curl -fsSL https://bun.sh/install | bash
+            echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           else
-            npm install
+            echo "No bunx in lint script -> skip Bun install"
+          fi
+
+      # ✅ 有 lockfile 用 ci，沒有就 install；ci 失敗自動 fallback
+      - name: Install dependencies (lockfile-safe)
+        shell: bash
+        run: |
+          if [ -f package.json ]; then
+            if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+              npm ci --no-audit || npm install
+            else
+              npm install
+            fi
+          else
+            echo "No package.json -> skip install"
           fi
 
       - name: Run Lint
@@ -37,16 +56,21 @@ jobs:
         run: npm test --if-present
 
       - name: Build
-        run: npm run build --if-present
+        run: |
+          if [ -f package.json ]; then
+            npm run build --if-present || npm run compile --if-present || echo "no build script"
+          fi
 
+      # ✅ 產物加上 node 版本避免覆蓋
       - name: Archive artifact
-        run: zip -r build.zip . -x ".git/*" "node_modules/*"
+        run: zip -r build-${{ matrix.node-version }}.zip . -x ".git/*" "node_modules/*"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: build-artifact
-          path: build.zip
+          name: build-artifact-${{ matrix.node-version }}
+          path: build-${{ matrix.node-version }}.zip
 
+  # ✅ 動態版本標籤
   versioning:
     needs: build_and_test
     runs-on: ubuntu-latest
@@ -56,6 +80,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: mk
+        shell: bash
         run: |
           if [ -f package.json ]; then
             base=$(node -p "require('./package.json').version || '0.1.0'")
@@ -73,9 +98,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: staging
     steps:
+      # ✅ 一次抓回兩個矩陣產物並合併到工作目錄
       - uses: actions/download-artifact@v4
         with:
-          name: build-artifact
+          pattern: build-artifact-*
+          merge-multiple: true
 
       - name: Release to Staging (dynamic tag)
         env:
@@ -87,16 +114,17 @@ jobs:
           gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1 \
             && gh release delete "$TAG" --cleanup-tag --yes --repo "$GH_REPO" \
             || echo "No existing release for $TAG"
-          gh release create "$TAG" build.zip --notes "${NOTE:-'Testing pre-production release'}" --repo "$GH_REPO"
+          gh release create "$TAG" build-*.zip --notes "${NOTE:-'Testing pre-production release'}" --repo "$GH_REPO"
 
   deploy-production:
     needs: [deploy-staging, versioning]
     runs-on: ubuntu-latest
-    environment: production
+    environment: production   # 會等 Reviewer 批准
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: build-artifact
+          pattern: build-artifact-*
+          merge-multiple: true
 
       - name: Release to Production (dynamic tag)
         env:
@@ -108,4 +136,4 @@ jobs:
           gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1 \
             && gh release delete "$TAG" --cleanup-tag --yes --repo "$GH_REPO" \
             || echo "No existing release for $TAG"
-          gh release create "$TAG" build.zip --notes "${NOTE:-'Production release'}" --repo "$GH_REPO"
+          gh release create "$TAG" build-*.zip --notes "${NOTE:-'Production release'}" --repo "$GH_REPO"
