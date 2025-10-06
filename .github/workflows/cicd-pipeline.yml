@@ -18,7 +18,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
-        with: { node-version: ${{ matrix['node-version'] }} }
+        with:
+          node-version: ${{ matrix.node-version }}
 
       # lockfile-safe：有 lock 用 ci；沒有就 install
       - name: Install deps (ci with fallback)
