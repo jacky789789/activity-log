@@ -47,7 +47,7 @@ jobs:
           fi
 
       - name: Archive
-        run: zip -r build-${{ matrix['node-version'] }}.zip . -x ".git/*" "node_modules/*"
+        run: zip -r build-${{ matrix.node-version }}.zip . -x ".git/*" "node_modules/*"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -80,7 +80,8 @@ jobs:
     environment: staging
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: build-artifacts }
+        with:
+          name: build-artifacts
 
       - name: Release to Staging (idempotent)
         env:
@@ -95,11 +96,13 @@ jobs:
           gh release create "$TAG" build-*.zip --notes "${NOTE:-'Testing pre-production release'}" --repo "$GH_REPO"
 
       - name: Notify Slack (staging)
-        if: ${{ success() && secrets.SLACK_WEBHOOK_URL != '' }}
+        if: ${{ success() && env.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           curl -X POST -H 'Content-type: application/json' \
             --data "{\"text\":\"🟡 Staging released: ${{ needs.versioning.outputs.TAG_STAGING }}\"}" \
-            "${{ secrets.SLACK_WEBHOOK_URL }}"
+            "${SLACK_WEBHOOK_URL}"
 
   deploy-production:
     needs: [deploy-staging, versioning]
@@ -107,7 +110,8 @@ jobs:
     environment: production   # 這裡會等待 Reviewer 批准
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: build-artifacts }
+        with:
+          name: build-artifacts
 
       - name: Release to Production (awaits approval)
         id: release
@@ -123,11 +127,13 @@ jobs:
           gh release create "$TAG" build-*.zip --notes "${NOTE:-'Production release'}" --repo "$GH_REPO"
 
       - name: Notify Slack (prod)
-        if: ${{ success() && secrets.SLACK_WEBHOOK_URL != '' }}
+        if: ${{ success() && env.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           curl -X POST -H 'Content-type: application/json' \
             --data "{\"text\":\"✅ Production released: ${{ needs.versioning.outputs.TAG_PROD }}\"}" \
-            "${{ secrets.SLACK_WEBHOOK_URL }}"
+            "${SLACK_WEBHOOK_URL}"
 
       - name: Rollback if failed (cleanup half-done releases)
         if: ${{ failure() }}
