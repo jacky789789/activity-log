@@ -67,9 +67,12 @@ jobs:
         run: |
           TAG_WITH_ENV="${TAG}-dev"
           NOTE_WITH_ENV="${NOTE}"$'\n'"Environment: dev"
-          gh release delete "$TAG_WITH_ENV" -y --repo "$GITHUB_REPOSITORY" || true
-          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG_WITH_ENV" || true
-          gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
+          if gh release view "$TAG_WITH_ENV" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG_WITH_ENV" build.zip --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG_WITH_ENV" --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
+          fi
   
   deploy-staging:
     needs:
@@ -91,9 +94,12 @@ jobs:
         run: |
           TAG_WITH_ENV="${TAG}-staging"
           NOTE_WITH_ENV="${NOTE}"$'\n'"Environment: staging"
-          gh release delete "$TAG_WITH_ENV" -y --repo "$GITHUB_REPOSITORY" || true
-          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG_WITH_ENV" || true
-          gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
+          if gh release view "$TAG_WITH_ENV" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG_WITH_ENV" build.zip --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG_WITH_ENV" --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
+          fi
 
   deploy-production:
     needs:
@@ -115,6 +121,9 @@ jobs:
         run: |
           TAG_WITH_ENV="${TAG}"
           NOTE_WITH_ENV="${NOTE}"$'\n'"Environment: production"
-          gh release delete "$TAG_WITH_ENV" -y --repo "$GITHUB_REPOSITORY" || true
-          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG_WITH_ENV" || true
-          gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
+          if gh release view "$TAG_WITH_ENV" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG_WITH_ENV" build.zip --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG_WITH_ENV" --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG_WITH_ENV" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
+          fi
