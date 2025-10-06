@@ -90,12 +90,17 @@ jobs:
         with:
           name: build-artifact
 
-      - name: Release Dev Build
+      - name: Release Dev Build (repo-scoped, no git)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}           # gh 使用這個
+          GH_REPO: ${{ github.repository }}               # e.g. owner/repo
           TAG: ${{ vars.BUILD_TAG }}
           NOTE: ${{ vars.RELEASE_NOTE }}
         run: |
-          gh release delete "$TAG" -y || true
-          git tag -d "$TAG" || true
-          gh release create "$TAG" build.zip --notes "${NOTE:-'Dev smoke build'}"
+          # 若同名 release 已存在，先刪除（連同 tag）
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release delete "$TAG" --cleanup-tag --yes --repo "$GH_REPO"
+          fi
+
+          # 建立新 release（用 repo 作用域，不需 git 目錄）
+          gh release create "$TAG" build.zip --notes "${NOTE:-'Dev smoke build'}" --repo "$GH_REPO"
