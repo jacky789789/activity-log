@@ -44,7 +44,7 @@ jobs:
           name: build-artifact
           path: build.zip
 
-  deploy-dev:
+    deploy-dev:
     needs: build
     runs-on: ubuntu-latest
     environment: dev
@@ -54,7 +54,7 @@ jobs:
         with:
           name: build-artifact
 
-      - name: 🚀 Create Dev Release
+      - name: 🚀 Create or Update Dev Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -62,13 +62,16 @@ jobs:
           NOTE: ${{ vars.RELEASE_NOTE }}
         run: |
           TAG="${RAW_TAG}-dev"
+          NOTE_WITH_ENV="$NOTE"$'\n'"Environment: dev"
+
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" build.zip --clobber --repo "$GITHUB_REPOSITORY"
-            gh release edit "$TAG" --notes "$NOTE"$'\n''Environment: dev' --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$TAG" build.zip --notes "$NOTE"$'\n''Environment: dev' --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
+            exit 0
           fi
-          NOTE: ${{ vars.RELEASE_NOTE }}
-        run: |
-          TAG="${RAW_TAG}-dev"
-          gh release create "$TAG" build.zip --notes "$NOTE"$'\n''Environment: dev' --repo "$GITHUB_REPOSITORY"
+
+          if gh api --method GET "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" >/dev/null 2>&1; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"
+          fi
+
+          gh release create "$TAG" build.zip --notes "$NOTE_WITH_ENV" --repo "$GITHUB_REPOSITORY"
