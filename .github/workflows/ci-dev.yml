@@ -1,0 +1,56 @@
+name: CI Dev Deployment
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write  # 需要建立 release/tag
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20]   # 基礎用單一版本；O 級會做矩陣
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install & Build
+        run: |
+          npm ci
+          npm run build || npm run compile || echo "no build script, skipping"
+          zip -r build.zip . -x ".git/*" "node_modules/*"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: build.zip
+
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+
+      - name: Release Dev Build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ vars.BUILD_TAG }}
+          NOTE: ${{ vars.RELEASE_NOTE }}
+        run: |
+          # 若同名 tag 已存在就先刪除（避免重複）
+          gh release delete "$TAG" -y || true
+          git tag -d "$TAG" || true
+          gh release create "$TAG" build.zip --notes "$NOTE"
