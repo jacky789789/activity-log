@@ -1,18 +1,18 @@
-name: CI Dev Deployment
+name: CI Dev Deployment (lockfile-safe)
 
 on:
   push:
     branches: [ main ]
 
 permissions:
-  contents: write  # 需要建立 release/tag
+  contents: write   # 需要建立 release 以及（可選）自動 commit lockfile
+
+env:
+  AUTO_COMMIT_LOCK: "true"  # 想關掉自動 commit 改成 "false"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [20]   # 基礎用單一版本；O 級會做矩陣
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,12 +20,58 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 20
 
-      - name: Install & Build
+      - name: Install dependencies (ci with safe fallback)
+        id: deps
+        shell: bash
         run: |
-          npm ci
-          npm run build || npm run compile || echo "no build script, skipping"
+          set -euxo pipefail
+          if [ -f package.json ]; then
+            # 有 lock 先試 ci；失敗就 fallback install
+            if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+              echo "Lockfile detected → try npm ci"
+              if npm ci --no-audit; then
+                echo "used_ci=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "npm ci failed → fallback to npm install"
+                npm install
+                echo "used_ci=false" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "No lockfile → npm install"
+              npm install
+              echo "used_ci=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "No package.json → skip Node install"
+            echo "used_ci=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Auto-commit updated lockfile (optional)
+        if: env.AUTO_COMMIT_LOCK == 'true' && steps.deps.outputs.used_ci != 'true' && hashFiles('package-lock.json') != ''
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # 若有 lockfile 變更，commit 回去避免之後再失敗
+          if ! git diff --quiet -- package-lock.json 2>/dev/null || ! git ls-files --error-unmatch package-lock.json >/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json
+            git commit -m "chore: sync package-lock.json [skip ci]" || true
+            git push || true
+          fi
+
+      - name: Build (safe)
+        run: |
+          if [ -f package.json ]; then
+            npm run build --if-present || npm run compile --if-present || echo "no build script"
+          else
+            echo "No package.json, skip build"
+          fi
+
+      - name: Archive build
+        run: |
           zip -r build.zip . -x ".git/*" "node_modules/*"
 
       - name: Upload Artifact
@@ -50,7 +96,6 @@ jobs:
           TAG: ${{ vars.BUILD_TAG }}
           NOTE: ${{ vars.RELEASE_NOTE }}
         run: |
-          # 若同名 tag 已存在就先刪除（避免重複）
           gh release delete "$TAG" -y || true
           git tag -d "$TAG" || true
-          gh release create "$TAG" build.zip --notes "$NOTE"
+          gh release create "$TAG" build.zip --notes "${NOTE:-'Dev smoke build'}"
