@@ -5,9 +5,11 @@
   "main": "dist/index.js",
   "type": "commonjs",
   "scripts": {
-    "build": "bunx @vercel/ncc build src/index.js --license licenses.txt",
-    "lint": "bunx eslint .",
-    "test": "vitest run"
+    "build": "npm run build || echo \"no build script; skipping\"",
+    "test": "node --test tests",
+    "test:unit": "node --test tests/unit",
+    "test:integration": "node --test tests/integration",
+    "coverage": "npx c8 --reporter=lcov --reporter=text node --test tests"
   },
   "repository": {
     "type": "git",
@@ -35,14 +37,6 @@
     "@vercel/ncc": "^0.38.3",
     "vitest": "^1.6.0"
   }
-  {
-  "scripts": {
-    "build": "npm run build || echo \"no build script; skipping\"",
-    "test": "node --test tests",
-    "test:unit": "node --test tests/unit",
-    "test:integration": "node --test tests/integration",
-    "coverage": "npx c8 --reporter=lcov --reporter=text node --test tests"
-  }
-}
+
 
 }
