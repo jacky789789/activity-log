@@ -1,0 +1,72 @@
+name: Build-Test-Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  deployments: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 18 }
+
+      - name: Install deps (lockfile-safe)
+        run: |
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci --no-audit || npm install
+          else
+            npm install
+          fi
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Archive artifact
+        run: zip -r build.zip . -x ".git/*" "node_modules/*"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: build.zip
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 18 }
+
+      - name: Install deps
+        run: npm install
+
+      - name: Download built artifact (for verification)
+        uses: actions/download-artifact@v4
+        with: { name: build-artifact }
+
+      - name: Run Automated Tests (gate)
+        run: |
+          echo "Running tests..."
+          npm test   # ❌ 任何失敗會直接讓工作流失敗，後面 release 不會跑
+
+  release-dev:
+    runs-on: ubuntu-latest
+    needs: test
+    environment: dev
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: build-artifact }
+
+      - name: Create Dev Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: dev-${{ github.run_number }}
+        run: |
+          gh release create "$TAG" build.zip --notes "Automated dev release after tests passed" --repo "$GH_REPO"
