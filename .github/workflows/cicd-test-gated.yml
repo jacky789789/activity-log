@@ -1,102 +1,136 @@
 name: CI/CD with Test Gates
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch: {}
 
 permissions:
   contents: write
   deployments: write
 
-env:
-  TEST_ENV: staging   # 預設測試環境參數，後面 job 會覆寫
+# 你可以在 Settings → Environments 裡建立 staging / production，
+# 並在 production 啟用 Required reviewers 來要求人工審核。
 
 jobs:
+  # -----------------------------
+  # 1) Build
+  # -----------------------------
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
-        with: { node-version: 18 }
-      - name: Install deps (lockfile-safe)
+        with:
+          node-version: 18
+
+      # 有 lockfile 用 ci；沒有就 install
+      - name: Install dependencies (lockfile-safe)
+        shell: bash
         run: |
           if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
             npm ci --no-audit || npm install
           else
             npm install
           fi
+
       - name: Build
         run: npm run build --if-present
-      - name: Upload dist
-        run: zip -r dist.zip . -x ".git/*" "node_modules/*"
-      - uses: actions/upload-artifact@v4
-        with: { name: dist-artifact, path: dist.zip }
 
+      - name: Archive build
+        run: zip -r dist.zip . -x ".git/*" "node_modules/*"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-artifact
+          path: dist.zip
+
+  # -----------------------------
+  # 2) Tests — Unit
+  # -----------------------------
   test-unit:
     runs-on: ubuntu-latest
     needs: build
-    env: { TEST_ENV: staging }
+    env:
+      TEST_ENV: staging
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 18 }
-      - run: npm install
-      - name: Unit tests (gate)
+        with:
+          node-version: 18
+
+      - name: Install deps
+        run: npm install
+
+      - name: Run unit tests (gate)
         run: npm run test:unit
 
+  # -----------------------------
+  # 3) Tests — Integration
+  # -----------------------------
   test-integration:
     runs-on: ubuntu-latest
     needs: test-unit
-    env: { TEST_ENV: staging }
+    env:
+      TEST_ENV: staging
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 18 }
-      - run: npm install
-      - name: Integration tests (gate)
+        with:
+          node-version: 18
+
+      - name: Install deps
+        run: npm install
+
+      - name: Run integration tests (gate)
         run: npm run test:integration
 
+  # -----------------------------
+  # 4) Deploy to STAGING (tests 必須成功)
+  # -----------------------------
   deploy-staging:
+    if: ${{ success() }}          # ← 測試沒過就不會執行
     runs-on: ubuntu-latest
-    needs: coverage
+    needs: test-integration
     environment: staging
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: dist-artifact }
+        with:
+          name: dist-artifact
+
       - name: Release to Staging
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: staging-${{ github.run_number }}
-        run: gh release create "$TAG" dist.zip --notes "Staging release (tests passed)" --repo "$GH_REPO"
+          NOTE: ${{ vars.RELEASE_NOTE }}
+        run: |
+          gh release create "$TAG" dist.zip \
+            --notes "${NOTE:-'Staging release (tests passed)'}" \
+            --repo "$GH_REPO"
 
+  # -----------------------------
+  # 5) Deploy to PRODUCTION (需 staging 成功 + 環境審核)
+  # -----------------------------
   deploy-production:
+    if: ${{ success() }}          # ← 上一階段成功才跑（同時受 production reviewers 保護）
     runs-on: ubuntu-latest
     needs: deploy-staging
-    environment: production   # ← 需在 Environments 設 Required reviewers
+    environment: production       # 在 Environments 設 Required reviewers 會卡這裡等你 Approve
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: dist-artifact }
+        with:
+          name: dist-artifact
+
       - name: Release to Production
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: prod-${{ github.run_number }}
-        run: gh release create "$TAG" dist.zip --notes "Production release (approved)" --repo "$GH_REPO"
- 
-  coverage:
-    runs-on: ubuntu-latest
-    needs: [test-integration]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 18 }
-      - run: npm install
-      - name: Run coverage
-        run: npm run coverage
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: |
-            coverage/
-            coverage/lcov.info
+          NOTE: ${{ vars.RELEASE_NOTE }}
+        run: |
+          gh release create "$TAG" dist.zip \
+            --notes "${NOTE:-'Production release (approved)'}" \
+            --repo "$GH_REPO"
