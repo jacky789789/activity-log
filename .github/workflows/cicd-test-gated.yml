@@ -57,7 +57,7 @@ jobs:
 
   deploy-staging:
     runs-on: ubuntu-latest
-    needs: test-integration
+    needs: coverage
     environment: staging
     steps:
       - uses: actions/download-artifact@v4
@@ -82,3 +82,21 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: prod-${{ github.run_number }}
         run: gh release create "$TAG" dist.zip --notes "Production release (approved)" --repo "$GH_REPO"
+ 
+  coverage:
+    runs-on: ubuntu-latest
+    needs: [test-integration]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 18 }
+      - run: npm install
+      - name: Run coverage
+        run: npm run coverage
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage/
+            coverage/lcov.info
