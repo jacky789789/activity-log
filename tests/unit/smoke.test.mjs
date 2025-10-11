@@ -1,7 +1,8 @@
-import assert from "node:assert";
+import { test } from 'node:test';
+import assert from 'node:assert';
 
-describe("smoke", () => {
-  it("adds numbers correctly", () => {
-    assert.equal(1 + 1, 2);
-  });
+// 簡單單元測試
+test('adds numbers correctly', () => {
+  assert.strictEqual(1 + 1, 2);
 });
+
