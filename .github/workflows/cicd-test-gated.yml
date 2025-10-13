@@ -11,19 +11,18 @@ on:
         default: "false"
 
 permissions:
-  contents: write       # 建 release 需要
+  contents: write
   deployments: write
   issues: write
   actions: read
   checks: read
 
-# 同一分支避免同時多跑
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  # 1) 建置（Node 18/20 矩陣）
+  # 1) Build（矩陣：Node 18/20）
   build:
     runs-on: ubuntu-latest
     strategy:
@@ -31,12 +30,10 @@ jobs:
         node-version: [18, 20]
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
-
       - name: Install dependencies (lockfile-safe)
         run: |
           if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
@@ -44,22 +41,19 @@ jobs:
           else
             npm install
           fi
-
       - name: Build
         run: |
           echo "Building on Node ${{ matrix.node-version }}..."
           npm run build
-
       - name: Archive build
         run: zip -r build.zip . -x ".git/*" "node_modules/*"
-
       - name: Upload build artifact (per-node)
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.node-version }}
           path: build.zip
 
-  # 2) 單元測試（矩陣）
+  # 2) Unit tests（矩陣）
   test-unit:
     runs-on: ubuntu-latest
     needs: build
@@ -76,7 +70,7 @@ jobs:
       - name: Run unit tests (gate)
         run: npm run test:unit
 
-  # 3) 整合測試（矩陣）
+  # 3) Integration tests（矩陣）
   test-integration:
     runs-on: ubuntu-latest
     needs: test-unit
@@ -93,12 +87,13 @@ jobs:
       - name: Run integration tests (gate)
         run: npm run test:integration
 
-  # 4) Coverage（輸出百分比，供 gate 使用）
+  # 4) Coverage（輸出 pct 與 coverage_ok）
   coverage:
     runs-on: ubuntu-latest
     needs: test-integration
     outputs:
       pct: ${{ steps.extract.outputs.pct }}
+      coverage_ok: ${{ steps.gate.outputs.coverage_ok }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -107,7 +102,6 @@ jobs:
           cache: 'npm'
       - run: npm ci || npm install
 
-      # 確保產生 json-summary；即使測試失敗也盡量輸出報告
       - name: Generate coverage (json-summary + text-summary)
         run: |
           npm run coverage || true
@@ -123,34 +117,47 @@ jobs:
           echo "Coverage lines: ${PCT}%"
           echo "pct=${PCT}" >> "$GITHUB_OUTPUT"
 
+      - name: Gate (>=60)
+        id: gate
+        shell: bash
+        run: |
+          PCT="${{ steps.extract.outputs.pct }}"
+          ok=false
+          awk -v p="$PCT" 'BEGIN{exit (p+0)>=60 ? 0:1}'
+          if [ $? -eq 0 ]; then ok=true; fi
+          echo "coverage_ok=$ok" >> "$GITHUB_OUTPUT"
+
+      - name: Report PCT to summary
+        run: echo "Coverage lines = ${{ steps.extract.outputs.pct }}%" >> $GITHUB_STEP_SUMMARY
+
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: coverage/
 
-  # 5) 部署到 Staging（只在 main，且 coverage 達標才跑）
+  # 5) Deploy to Staging（只在 main；用 coverage_ok 判斷）
   deploy-staging:
     runs-on: ubuntu-latest
     needs: coverage
-    # 重要修正：把 coverage 輸出轉成數字比對，避免字串比較造成 skipped
-    if: ${{ github.ref == 'refs/heads/main' && fromJSON(format('{0}', needs.coverage.outputs.pct)) >= 60 }}
+    if: ${{ github.ref_name == 'main' && needs.coverage.outputs.coverage_ok == 'true' }}
     environment: staging
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: build-18   # 如要改用 Node 20 的產物，改成 build-20
+          name: build-18
       - name: Release to Staging
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # gh 會優先讀 GH_TOKEN
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: staging-1.0.0+build-${{ github.run_number }}
         run: |
+          echo "Deploying with coverage=${{ needs.coverage.outputs.pct }}%"
           gh release create "$TAG" build.zip \
             --notes "Staging release (tests ok, coverage=${{ needs.coverage.outputs.pct }}%)" \
             --repo "$GH_REPO"
 
-  # 6) 部署到 Production（需手動觸發，配合 Environment Reviewer）
+  # 6) Deploy to Production（需手動觸發 + 環境審核）
   deploy-production:
     runs-on: ubuntu-latest
     needs: deploy-staging
@@ -170,7 +177,7 @@ jobs:
             --notes "Production release (approved). Coverage=${{ needs.coverage.outputs.pct }}%" \
             --repo "$GH_REPO"
 
-  # 7) 測試/coverage 失敗時自動開 Issue（涵蓋更多前置 jobs）
+  # 7) 失敗通知（涵蓋前面主要 jobs）
   notify-on-fail:
     if: ${{ failure() }}
     runs-on: ubuntu-latest
