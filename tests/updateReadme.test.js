@@ -1,8 +1,8 @@
-// tests/updateReadme.test.js
-import test from 'node:test';
-import assert from 'node:assert/strict';
+// tests/updateReadme.test.js  (CommonJS)
+const test = require('node:test');
+const assert = require('node:assert/strict');
 
-// 手動 stub 一個假的 GitHub client（取代 vi.mock）
+// 建議用依賴注入或假物件來 stub GitHub client
 const fakeGithub = {
   getOctokit: () => ({
     rest: {
@@ -16,8 +16,8 @@ const fakeGithub = {
 };
 
 test('README.md should exist and not be empty', async () => {
-  // 假設你的 src/updateReadme.js 匯出一個可注入依賴的函式
+  // 在 CJS 裡如果要載 ESM，可用動態 import 放在 async 區塊
   const { updateReadme } = await import('../src/updateReadme.js');
-  const ok = await updateReadme({ github: fakeGithub }); // 用參數注入
+  const ok = await updateReadme({ github: fakeGithub });
   assert.equal(ok, true);
 });
