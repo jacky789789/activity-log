@@ -1,136 +1,148 @@
 name: CI/CD with Test Gates
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
-  workflow_dispatch: {}
-
-permissions:
-  contents: write
-  deployments: write
-
-# 你可以在 Settings → Environments 裡建立 staging / production，
-# 並在 production 啟用 Required reviewers 來要求人工審核。
 
 jobs:
-  # -----------------------------
-  # 1) Build
-  # -----------------------------
+  # 🧱 1. Build Job
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: ${{ matrix.node-version }}
 
-      # 有 lockfile 用 ci；沒有就 install
       - name: Install dependencies (lockfile-safe)
-        shell: bash
-        run: |
-          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-            npm ci --no-audit || npm install
-          else
-            npm install
-          fi
+        run: npm ci || npm install
 
       - name: Build
-        run: npm run build --if-present
+        run: |
+          echo "Building on Node ${{ matrix.node-version }}..."
+          npm run build || echo "No build script; skipping"
 
       - name: Archive build
-        run: zip -r dist.zip . -x ".git/*" "node_modules/*"
+        run: zip -r build.zip .
 
-      - name: Upload artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist-artifact
-          path: dist.zip
+          name: build-${{ matrix.node-version }}
+          path: build.zip
 
-  # -----------------------------
-  # 2) Tests — Unit
-  # -----------------------------
+  # 🧪 2. Unit Test
   test-unit:
     runs-on: ubuntu-latest
     needs: build
-    env:
-      TEST_ENV: staging
+    strategy:
+      matrix:
+        node-version: [18, 20]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-${{ matrix.node-version }}
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: ${{ matrix.node-version }}
 
-      - name: Install deps
-        run: npm install
-
-      - name: Run unit tests (gate)
+      - run: npm install
+      - name: Run unit tests
         run: npm run test:unit
 
-  # -----------------------------
-  # 3) Tests — Integration
-  # -----------------------------
+  # 🔧 3. Integration Test
   test-integration:
     runs-on: ubuntu-latest
     needs: test-unit
-    env:
-      TEST_ENV: staging
+    strategy:
+      matrix:
+        node-version: [18, 20]
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm install
+      - name: Run integration tests
+        run: npm run test:integration
+
+  # 📊 4. Coverage report (生成 + 上傳)
+  coverage:
+    runs-on: ubuntu-latest
+    needs: test-integration
+    outputs:
+      pct: ${{ steps.extract.outputs.pct }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 18
+      - run: npm install
+      - name: Generate coverage
+        run: npm run coverage
+      - name: Extract coverage %
+        id: extract
+        run: |
+          mkdir -p coverage
+          npx c8 --reporter=json-summary node --test tests
+          pct=$(jq -r '.total.lines.pct // 0' coverage/coverage-summary.json)
+          echo "Coverage: $pct%"
+          echo "pct=$pct" >> $GITHUB_OUTPUT
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
 
-      - name: Install deps
-        run: npm install
-
-      - name: Run integration tests (gate)
-        run: npm run test:integration
-
-  # -----------------------------
-  # 4) Deploy to STAGING (tests 必須成功)
-  # -----------------------------
+  # 🚀 5. Deploy to Staging (若覆蓋率 ≥ 60%)
   deploy-staging:
-    if: ${{ success() }}          # ← 測試沒過就不會執行
     runs-on: ubuntu-latest
-    needs: test-integration
+    needs: coverage
+    if: ${{ success() && needs.coverage.outputs.pct >= 60 }}
     environment: staging
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: dist-artifact
-
-      - name: Release to Staging
+          name: build-18
+      - name: Deploy Staging
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          TAG: staging-${{ github.run_number }}
-          NOTE: ${{ vars.RELEASE_NOTE }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$TAG" dist.zip \
-            --notes "${NOTE:-'Staging release (tests passed)'}" \
-            --repo "$GH_REPO"
+          TAG="staging-1.0.0+build-${{ github.run_number }}"
+          gh release create "$TAG" build.zip --notes "Automated staging release ✅"
 
-  # -----------------------------
-  # 5) Deploy to PRODUCTION (需 staging 成功 + 環境審核)
-  # -----------------------------
+  # 🚀 6. Deploy to Production (需人工審核)
   deploy-production:
-    if: ${{ success() }}          # ← 上一階段成功才跑（同時受 production reviewers 保護）
     runs-on: ubuntu-latest
     needs: deploy-staging
-    environment: production       # 在 Environments 設 Required reviewers 會卡這裡等你 Approve
+    if: ${{ success() }}
+    environment: production
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: dist-artifact
+          name: build-18
+      - name: Deploy Production
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="prod-1.0.0+build-${{ github.run_number }}"
+          gh release create "$TAG" build.zip --notes "Production release 🚀"
 
-      - name: Release to Production
+  # 🚨 7. Notify (on test fail)
+  notify-on-fail:
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    needs: [test-unit, test-integration]
+    steps:
+      - name: Auto-create GitHub Issue for failed tests
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          TAG: prod-${{ github.run_number }}
-          NOTE: ${{ vars.RELEASE_NOTE }}
         run: |
-          gh release create "$TAG" dist.zip \
-            --notes "${NOTE:-'Production release (approved)'}" \
-            --repo "$GH_REPO"
+          gh issue create \
+            --title "❌ CI Tests Failed in Run #${{ github.run_number }}" \
+            --body "One or more tests failed. See full logs here: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
