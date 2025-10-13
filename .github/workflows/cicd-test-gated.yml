@@ -34,6 +34,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
+
       - name: Install dependencies (lockfile-safe)
         run: |
           if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
@@ -41,12 +42,15 @@ jobs:
           else
             npm install
           fi
+
       - name: Build
         run: |
           echo "Building on Node ${{ matrix.node-version }}..."
           npm run build
+
       - name: Archive build
         run: zip -r build.zip . -x ".git/*" "node_modules/*"
+
       - name: Upload build artifact (per-node)
         uses: actions/upload-artifact@v4
         with:
@@ -87,7 +91,7 @@ jobs:
       - name: Run integration tests (gate)
         run: npm run test:integration
 
-  # 4) Coverage（輸出 pct 與 coverage_ok）
+  # 4) Coverage（輸出 pct 與 coverage_ok；處理 Unknown/NaN）
   coverage:
     runs-on: ubuntu-latest
     needs: test-integration
@@ -109,14 +113,20 @@ jobs:
           # 保底：若沒有 summary，寫入 0%
           node -e "const fs=require('fs');fs.mkdirSync('coverage',{recursive:true});const p='coverage/coverage-summary.json';if(!fs.existsSync(p)){fs.writeFileSync(p,JSON.stringify({total:{lines:{pct:0}}}))}"
 
+      # 防呆版：取值非數字（空字串/Unknown/NaN）一律當 0
       - name: Extract coverage %
         id: extract
         shell: bash
         run: |
-          PCT=$(node -e "try{console.log(require('./coverage/coverage-summary.json').total.lines.pct||0)}catch(e){console.log(0)}")
+          PCT=$(node -e "try{console.log(require('./coverage/coverage-summary.json').total.lines.pct ?? '')}catch(e){console.log('')}")
+          if ! printf '%s' "$PCT" | grep -Eq '^[0-9]+([.][0-9]+)?$'; then
+            echo "Got non-numeric coverage value: '$PCT' -> fallback to 0"
+            PCT=0
+          fi
           echo "Coverage lines: ${PCT}%"
           echo "pct=${PCT}" >> "$GITHUB_OUTPUT"
 
+      # 門檻：>=60 視為通過（可自行調整）
       - name: Gate (>=60)
         id: gate
         shell: bash
@@ -136,7 +146,7 @@ jobs:
           name: coverage
           path: coverage/
 
-  # 5) Deploy to Staging（只在 main；用 coverage_ok 判斷）
+  # 5) Deploy to Staging（只在 main；用 coverage_ok）
   deploy-staging:
     runs-on: ubuntu-latest
     needs: coverage
@@ -177,7 +187,7 @@ jobs:
             --notes "Production release (approved). Coverage=${{ needs.coverage.outputs.pct }}%" \
             --repo "$GH_REPO"
 
-  # 7) 失敗通知（涵蓋前面主要 jobs）
+  # 7) 失敗通知（涵蓋主要 jobs）
   notify-on-fail:
     if: ${{ failure() }}
     runs-on: ubuntu-latest
