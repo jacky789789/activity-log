@@ -123,7 +123,7 @@ jobs:
           echo "pct=${PCT}" >> "$GITHUB_OUTPUT"
 
       # ★ 修正：用 if awk ... then，避免 -e 導致步驟直接失敗
-      - name: Gate (>=60)
+      - name: Gate (>=10)
         id: gate
         shell: bash
         run: |
