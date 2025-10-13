@@ -34,7 +34,6 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
-
       - name: Install dependencies (lockfile-safe)
         run: |
           if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
@@ -42,15 +41,12 @@ jobs:
           else
             npm install
           fi
-
       - name: Build
         run: |
           echo "Building on Node ${{ matrix.node-version }}..."
           npm run build
-
       - name: Archive build
         run: zip -r build.zip . -x ".git/*" "node_modules/*"
-
       - name: Upload build artifact (per-node)
         uses: actions/upload-artifact@v4
         with:
@@ -113,7 +109,7 @@ jobs:
           # 保底：若沒有 summary，寫入 0%
           node -e "const fs=require('fs');fs.mkdirSync('coverage',{recursive:true});const p='coverage/coverage-summary.json';if(!fs.existsSync(p)){fs.writeFileSync(p,JSON.stringify({total:{lines:{pct:0}}}))}"
 
-      # 防呆版：取值非數字（空字串/Unknown/NaN）一律當 0
+      # 防呆：非數字（空字串/Unknown/NaN）一律當 0
       - name: Extract coverage %
         id: extract
         shell: bash
@@ -126,16 +122,18 @@ jobs:
           echo "Coverage lines: ${PCT}%"
           echo "pct=${PCT}" >> "$GITHUB_OUTPUT"
 
-      # 門檻：>=60 視為通過（可自行調整）
+      # ★ 修正：用 if awk ... then，避免 -e 導致步驟直接失敗
       - name: Gate (>=60)
         id: gate
         shell: bash
         run: |
           PCT="${{ steps.extract.outputs.pct }}"
           ok=false
-          awk -v p="$PCT" 'BEGIN{exit (p+0)>=60 ? 0:1}'
-          if [ $? -eq 0 ]; then ok=true; fi
+          if awk -v p="$PCT" 'BEGIN{exit (p+0)>=60 ? 0:1}'; then
+            ok=true
+          fi
           echo "coverage_ok=$ok" >> "$GITHUB_OUTPUT"
+          echo "Gate result: coverage=$PCT%, ok=$ok"
 
       - name: Report PCT to summary
         run: echo "Coverage lines = ${{ steps.extract.outputs.pct }}%" >> $GITHUB_STEP_SUMMARY
