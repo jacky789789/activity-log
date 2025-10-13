@@ -23,7 +23,7 @@ concurrency:
 
 env:
   # ▶ 調整門檻：成功情境想先必過可暫設 0；正式請用 60/80
-  GATE_THRESHOLD: "0"
+  GATE_THRESHOLD: "60"
 
 jobs:
   # 1) Build（矩陣：Node 18/20）
