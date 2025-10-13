@@ -54,7 +54,7 @@ jobs:
       matrix:
         node-version: [18, 20]
     steps:
-      - uses: actions/checkout@v4   # ← 修正：加入 checkout，確保有 package.json
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
@@ -71,7 +71,7 @@ jobs:
       matrix:
         node-version: [18, 20]
     steps:
-      - uses: actions/checkout@v4   # ← 修正：加入 checkout
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
@@ -80,7 +80,7 @@ jobs:
       - name: Run integration tests (gate)
         run: npm run test:integration
 
-  # 4) Coverage (single run; produce & upload + output %)
+  # 4) Coverage (生成 + 上傳 + 輸出覆蓋率；對異常有保底)
   coverage:
     runs-on: ubuntu-latest
     needs: test-integration
@@ -91,19 +91,34 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 18
-      - run: npm install
-      - name: Generate coverage
+      - run: npm ci || npm install
+
+      - name: Generate coverage (do not fail pipeline)
         run: |
-         npm run coverage || echo "⚠️ Some tests failed, continuing to collect coverage..."
+          npm run coverage || echo "⚠️ Some tests failed; continuing to collect coverage..."
+          # 保底：如果沒有產生 json-summary，就寫入 0% 以避免後續讀檔失敗
+          if [ ! -f coverage/coverage-summary.json ]; then
+            mkdir -p coverage
+            cat > coverage/coverage-summary.json <<'JSON'
+            {
+              "total": {
+                "lines": {"pct": 0},
+                "statements": {"pct": 0},
+                "branches": {"pct": 0},
+                "functions": {"pct": 0}
+              }
+            }
+JSON
+          fi
 
       - name: Extract coverage %
         id: extract
         shell: bash
         run: |
-          # 使用 Node 讀 coverage-summary.json，避免依賴 jq
-          PCT=$(node -e "console.log(require('./coverage/coverage-summary.json').total.lines.pct || 0)")
+          PCT=$(node -e "console.log(require('./coverage/coverage-summary.json').total.lines.pct ?? 0)")
           echo "Coverage lines: ${PCT}%"
           echo "pct=${PCT}" >> "$GITHUB_OUTPUT"
+
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -117,7 +132,6 @@ jobs:
     if: ${{ success() && needs.coverage.outputs.pct >= 60 }}
     environment: staging
     steps:
-      # 取用 Node 18 建的包（你也可以改拿 20 的）
       - uses: actions/download-artifact@v4
         with:
           name: build-18
@@ -131,7 +145,7 @@ jobs:
             --notes "Staging release (tests & coverage passed)" \
             --repo "$GH_REPO"
 
-  # 6) Deploy to Production (protected env)
+  # 6) Deploy to Production (需環境保護審核)
   deploy-production:
     runs-on: ubuntu-latest
     needs: deploy-staging
@@ -151,13 +165,12 @@ jobs:
             --notes "Production release (approved)" \
             --repo "$GH_REPO"
 
-  # 7) Notify on failure (auto-create issue)
+  # 7) Notify on failure（測試失敗自動開 Issue）
   notify-on-fail:
     if: ${{ failure() }}
     runs-on: ubuntu-latest
     needs: [test-unit, test-integration]
     steps:
-      # 不 checkout 也可；關鍵是要指定 --repo
       - name: Create issue on test failure
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
