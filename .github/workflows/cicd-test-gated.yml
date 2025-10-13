@@ -21,6 +21,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  # ▶ 調整門檻：成功情境想先必過可暫設 0；正式請用 60/80
+  GATE_THRESHOLD: "60"
+
 jobs:
   # 1) Build（矩陣：Node 18/20）
   build:
@@ -109,7 +113,7 @@ jobs:
           # 保底：若沒有 summary，寫入 0%
           node -e "const fs=require('fs');fs.mkdirSync('coverage',{recursive:true});const p='coverage/coverage-summary.json';if(!fs.existsSync(p)){fs.writeFileSync(p,JSON.stringify({total:{lines:{pct:0}}}))}"
 
-      # 防呆：非數字（空字串/Unknown/NaN）一律當 0
+      # 非數字（空字串/Unknown/NaN）一律當 0
       - name: Extract coverage %
         id: extract
         shell: bash
@@ -122,18 +126,19 @@ jobs:
           echo "Coverage lines: ${PCT}%"
           echo "pct=${PCT}" >> "$GITHUB_OUTPUT"
 
-      # ★ 修正：用 if awk ... then，避免 -e 導致步驟直接失敗
-      - name: Gate (>=0)
+      # ★ 修正：避免 -e 造成步驟退出；只輸出布林，不讓 job 失敗
+      - name: Gate (>=${{ env.GATE_THRESHOLD }})
         id: gate
         shell: bash
         run: |
           PCT="${{ steps.extract.outputs.pct }}"
+          THRESH="${{ env.GATE_THRESHOLD }}"
           ok=false
-          if awk -v p="$PCT" 'BEGIN{exit (p+0)>=60 ? 0:1}'; then
+          if awk -v p="$PCT" -v th="$THRESH" 'BEGIN{exit (p+0)>= (th+0) ? 0:1}'; then
             ok=true
           fi
           echo "coverage_ok=$ok" >> "$GITHUB_OUTPUT"
-          echo "Gate result: coverage=$PCT%, ok=$ok"
+          echo "Gate result: coverage=$PCT%, threshold=$THRESH, ok=$ok"
 
       - name: Report PCT to summary
         run: echo "Coverage lines = ${{ steps.extract.outputs.pct }}%" >> $GITHUB_STEP_SUMMARY
@@ -151,6 +156,12 @@ jobs:
     if: ${{ github.ref_name == 'main' && needs.coverage.outputs.coverage_ok == 'true' }}
     environment: staging
     steps:
+      - name: Debug gating values
+        run: |
+          echo "ref_name=${{ github.ref_name }}"
+          echo "pct=${{ needs.coverage.outputs.pct }}"
+          echo "coverage_ok=${{ needs.coverage.outputs.coverage_ok }}"
+          echo "threshold=${{ env.GATE_THRESHOLD }}"
       - uses: actions/download-artifact@v4
         with:
           name: build-18
@@ -160,9 +171,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: staging-1.0.0+build-${{ github.run_number }}
         run: |
-          echo "Deploying with coverage=${{ needs.coverage.outputs.pct }}%"
           gh release create "$TAG" build.zip \
-            --notes "Staging release (tests ok, coverage=${{ needs.coverage.outputs.pct }}%)" \
+            --notes "Staging release (coverage=${{ needs.coverage.outputs.pct }}%)" \
             --repo "$GH_REPO"
 
   # 6) Deploy to Production（需手動觸發 + 環境審核）
