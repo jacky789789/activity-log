@@ -5,8 +5,13 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  contents: write
+  deployments: write
+  issues: write
+
 jobs:
-  # 🧱 1. Build Job
+  # 1) Build (Matrix: Node 18 & 20)
   build:
     runs-on: ubuntu-latest
     strategy:
@@ -20,23 +25,28 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Install dependencies (lockfile-safe)
-        run: npm ci || npm install
+        run: |
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci --no-audit || npm install
+          else
+            npm install
+          fi
 
       - name: Build
         run: |
           echo "Building on Node ${{ matrix.node-version }}..."
-          npm run build || echo "No build script; skipping"
+          npm run build --if-present || echo "No build script; skipping"
 
       - name: Archive build
-        run: zip -r build.zip .
+        run: zip -r build.zip . -x ".git/*" "node_modules/*"
 
-      - name: Upload build artifact
+      - name: Upload build artifact (per-node)
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.node-version }}
           path: build.zip
 
-  # 🧪 2. Unit Test
+  # 2) Unit tests (Matrix)
   test-unit:
     runs-on: ubuntu-latest
     needs: build
@@ -44,19 +54,16 @@ jobs:
       matrix:
         node-version: [18, 20]
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: build-${{ matrix.node-version }}
-
+      - uses: actions/checkout@v4   # ← 修正：加入 checkout，確保有 package.json
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-
-      - run: npm install
-      - name: Run unit tests
+      - name: Install deps
+        run: npm install
+      - name: Run unit tests (gate)
         run: npm run test:unit
 
-  # 🔧 3. Integration Test
+  # 3) Integration tests (Matrix)
   test-integration:
     runs-on: ubuntu-latest
     needs: test-unit
@@ -64,14 +71,16 @@ jobs:
       matrix:
         node-version: [18, 20]
     steps:
+      - uses: actions/checkout@v4   # ← 修正：加入 checkout
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-      - run: npm install
-      - name: Run integration tests
+      - name: Install deps
+        run: npm install
+      - name: Run integration tests (gate)
         run: npm run test:integration
 
-  # 📊 4. Coverage report (生成 + 上傳)
+  # 4) Coverage (single run; produce & upload + output %)
   coverage:
     runs-on: ubuntu-latest
     needs: test-integration
@@ -87,36 +96,40 @@ jobs:
         run: npm run coverage
       - name: Extract coverage %
         id: extract
+        shell: bash
         run: |
-          mkdir -p coverage
-          npx c8 --reporter=json-summary node --test tests
-          pct=$(jq -r '.total.lines.pct // 0' coverage/coverage-summary.json)
-          echo "Coverage: $pct%"
-          echo "pct=$pct" >> $GITHUB_OUTPUT
+          # 使用 Node 讀 coverage-summary.json，避免依賴 jq
+          PCT=$(node -e "console.log(require('./coverage/coverage-summary.json').total.lines.pct || 0)")
+          echo "Coverage lines: ${PCT}%"
+          echo "pct=${PCT}" >> "$GITHUB_OUTPUT"
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: coverage/
 
-  # 🚀 5. Deploy to Staging (若覆蓋率 ≥ 60%)
+  # 5) Deploy to Staging (only if coverage >= 60)
   deploy-staging:
     runs-on: ubuntu-latest
     needs: coverage
     if: ${{ success() && needs.coverage.outputs.pct >= 60 }}
     environment: staging
     steps:
+      # 取用 Node 18 建的包（你也可以改拿 20 的）
       - uses: actions/download-artifact@v4
         with:
           name: build-18
-      - name: Deploy Staging
+      - name: Release to Staging
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: staging-1.0.0+build-${{ github.run_number }}
         run: |
-          TAG="staging-1.0.0+build-${{ github.run_number }}"
-          gh release create "$TAG" build.zip --notes "Automated staging release ✅"
+          gh release create "$TAG" build.zip \
+            --notes "Staging release (tests & coverage passed)" \
+            --repo "$GH_REPO"
 
-  # 🚀 6. Deploy to Production (需人工審核)
+  # 6) Deploy to Production (protected env)
   deploy-production:
     runs-on: ubuntu-latest
     needs: deploy-staging
@@ -126,23 +139,28 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: build-18
-      - name: Deploy Production
+      - name: Release to Production
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: prod-1.0.0+build-${{ github.run_number }}
         run: |
-          TAG="prod-1.0.0+build-${{ github.run_number }}"
-          gh release create "$TAG" build.zip --notes "Production release 🚀"
+          gh release create "$TAG" build.zip \
+            --notes "Production release (approved)" \
+            --repo "$GH_REPO"
 
-  # 🚨 7. Notify (on test fail)
+  # 7) Notify on failure (auto-create issue)
   notify-on-fail:
     if: ${{ failure() }}
     runs-on: ubuntu-latest
     needs: [test-unit, test-integration]
     steps:
-      - name: Auto-create GitHub Issue for failed tests
+      # 不 checkout 也可；關鍵是要指定 --repo
+      - name: Create issue on test failure
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh issue create \
-            --title "❌ CI Tests Failed in Run #${{ github.run_number }}" \
-            --body "One or more tests failed. See full logs here: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            --repo "${{ github.repository }}" \
+            --title "❌ CI tests failed in run #${{ github.run_number }}" \
+            --body "One or more tests failed. Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
