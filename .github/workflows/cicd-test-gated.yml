@@ -8,7 +8,7 @@ on:
       run_prod:
         description: "也部署到 production？(true/false)"
         required: true
-        default: "false"
+        default: "true"
 
 permissions:
   contents: write       # 建 release 需要
