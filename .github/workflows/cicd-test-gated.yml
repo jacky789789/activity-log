@@ -7,7 +7,7 @@ on:
     inputs:
       run_prod:
         description: "也部署到 production？(true/false)"
-        required: false
+        required: true
         default: "false"
 
 permissions:
